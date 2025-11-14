@@ -485,7 +485,6 @@ void DeleteNodes(Graph *graph, NodeId *nodesToDelete, int64_t numNodes)
 // Add Edges, unsafe will skip duplicate check
 void AddEdges(Graph *graph, NodeId *sourceNodes, NodeId *targetNodes, uint64_t numEdges, double *weights, int unsafe)
 {
-  printf("Adding...");
   if (!graph->sorted)
     Sort(graph);
   double weight = 0;
@@ -573,7 +572,7 @@ Graph *SubGraph(Graph *graph, NodeId *nodes, int64_t numNodes)
   ReIndex(newGraph);
   int64_t newIdx = 0;
 
-  // add edges
+  // iterate through the new nodes
   for (int64_t i = 0; i < numNodes; i++)
   {
     int64_t ogIdx = ogIdxs[i];
@@ -581,14 +580,15 @@ Graph *SubGraph(Graph *graph, NodeId *nodes, int64_t numNodes)
       continue;
     Node *ogSource = graph->nodes[ogIdx];
     Node *newSource = newGraph->nodes[_findNode(newGraph, nodes[newIdxs[newIdx]].dataset, nodes[newIdxs[newIdx]].id)];
+    // iterate through the outgoing edges
     for (int64_t j = 0; j < ogSource->outgoingLength; j++)
     {
       Node *originalTarget = ogSource->outgoing[j].target;
 
       if (!graph->isDiGraph)
       {
-        // if it's undirected and the index is small than i, it's already been processed
-        if (originalTarget->index <= i)
+        // to avoid duplicate processing, only process if source is less than target
+        if (originalTarget->index <= ogIdx)
           continue;
         int64_t newTargetIdx = _findNode(newGraph, originalTarget->dataset, originalTarget->id);
         if (newTargetIdx < 0)

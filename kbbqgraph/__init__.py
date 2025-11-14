@@ -9,26 +9,38 @@ from ctypes import (
     c_int,
     POINTER,
     Structure,
-    cast,
     byref,
+    addressof,
 )
-import networkx as nx
+from typing import Any, Iterable, List, Optional, Tuple
+
 import platform
 import os
 import numpy as np
 
+NodeTuple = Tuple[int, int]  # (dataset, id)
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
-bbqdll = None
+kbbqdll = None
+
 
 if platform.system() == "Windows" and os.path.exists(
-    os.path.join(dir_path, "bbqgraph.dll")
+    os.path.join(dir_path, "kbbqdll.dll")
 ):
-    bbqdll = CDLL(os.path.join(dir_path, "bbqgraph.dll"))
+    kbbqdll = CDLL(os.path.join(dir_path, "kbbqdll.dll"))
+
 elif platform.system() == "Linux" and os.path.exists(
-    os.path.join(dir_path, "bbqgraph.so")
+    os.path.join(dir_path, "kbbqdll.so")
 ):
-    bbqdll = CDLL(os.path.join(dir_path, "bbqgraph.so"))
+    kbbqdll = CDLL(os.path.join(dir_path, "kbbqdll.so"))
+
+elif platform.system() == "Darwin" and os.path.exists(
+    os.path.join(dir_path, "kbbqdll.dylib")
+):
+    kbbqdll = CDLL(os.path.join(dir_path, "kbbqdll.dylib"))
+
+else:
+    raise FileNotFoundError("Could not locate kbbqdll shared library.")
 
 
 class NodeId(Structure):  # pylint: disable=too-few-public-methods
@@ -99,41 +111,41 @@ class Graph(Structure):  # pylint: disable=too-few-public-methods
     ]
 
 
-bbqdll.InitGraph.argtypes = [c_int, c_uint64]
-bbqdll.InitGraph.restype = POINTER(Graph)
+kbbqdll.InitGraph.argtypes = [c_int, c_uint64]
+kbbqdll.InitGraph.restype = POINTER(Graph)
 
-bbqdll.AddNodes.argtypes = [
+kbbqdll.AddNodes.argtypes = [
     POINTER(Graph),
     c_uint32,
     POINTER(c_uint32),
     c_int64,
 ]
-bbqdll.AddNodes.restype = None
+kbbqdll.AddNodes.restype = None
 
-bbqdll.AddNodesUnsafe.argtypes = [
+kbbqdll.AddNodesUnsafe.argtypes = [
     POINTER(Graph),
     c_uint32,
     POINTER(c_uint32),
     c_int64,
 ]
-bbqdll.AddNodesUnsafe.restype = None
+kbbqdll.AddNodesUnsafe.restype = None
 
-bbqdll.DeleteNodes.argtypes = [
+kbbqdll.DeleteNodes.argtypes = [
     POINTER(Graph),
     POINTER(NodeId),
     c_int64,
 ]
-bbqdll.DeleteNodes.restype = None
+kbbqdll.DeleteNodes.restype = None
 
 
-bbqdll.SubGraph.argtypes = [
+kbbqdll.SubGraph.argtypes = [
     POINTER(Graph),
     POINTER(NodeId),
     c_int64,
 ]
-bbqdll.SubGraph.restype = POINTER(Graph)
+kbbqdll.SubGraph.restype = POINTER(Graph)
 
-bbqdll.AddEdges.argtypes = [
+kbbqdll.AddEdges.argtypes = [
     POINTER(Graph),
     POINTER(NodeId),
     POINTER(NodeId),
@@ -141,54 +153,87 @@ bbqdll.AddEdges.argtypes = [
     POINTER(c_double),
     c_int,
 ]
-bbqdll.AddEdges.restype = None
+kbbqdll.AddEdges.restype = None
 
-bbqdll.DeleteEdges.argtypes = [
+kbbqdll.DeleteEdges.argtypes = [
     POINTER(Graph),
     POINTER(NodeId),
     POINTER(NodeId),
     c_uint64,
 ]
-bbqdll.DeleteEdges.restype = None
+kbbqdll.DeleteEdges.restype = None
 
-bbqdll.CompressToUndirectedGraph.argtypes = [POINTER(Graph)]
-bbqdll.CompressToUndirectedGraph.restype = None
+kbbqdll.CompressToUndirectedGraph.argtypes = [POINTER(Graph)]
+kbbqdll.CompressToUndirectedGraph.restype = None
 
-bbqdll.ReIndex.argtypes = [POINTER(Graph)]
-bbqdll.ReIndex.restype = None
+kbbqdll.ReIndex.argtypes = [POINTER(Graph)]
+kbbqdll.ReIndex.restype = None
 
-bbqdll.Sort.argtypes = [POINTER(Graph)]
-bbqdll.Sort.restype = None
+kbbqdll.Sort.argtypes = [POINTER(Graph)]
+kbbqdll.Sort.restype = None
 
-bbqdll.FreeGraph.argtypes = [POINTER(Graph)]
-bbqdll.FreeGraph.restype = None
+kbbqdll.FreeGraph.argtypes = [POINTER(Graph)]
+kbbqdll.FreeGraph.restype = None
 
-bbqdll.FreeP.argtypes = [c_void_p]
+kbbqdll.FreeP.argtypes = [c_void_p]
 
-bbqdll._findNode.argtypes = [POINTER(Graph), c_int32, c_int32]
-bbqdll._findNode.restype = c_int64
+kbbqdll._findNode.argtypes = [POINTER(Graph), c_int32, c_int32]
+kbbqdll._findNode.restype = c_int64
 
-bbqdll.WeaklyConnectedComponents.argtypes = [POINTER(Graph), POINTER(c_int64)]
-bbqdll.WeaklyConnectedComponents.restype = POINTER(POINTER(NodeList))
+kbbqdll.WeaklyConnectedComponents.argtypes = [POINTER(Graph), POINTER(c_int64)]
+kbbqdll.WeaklyConnectedComponents.restype = POINTER(POINTER(NodeList))
 
-bbqdll.FindAllMaximalCliques.argtypes = [POINTER(Graph), c_int64]
-bbqdll.FindAllMaximalCliques.restype = Cliques
+kbbqdll.FindAllMaximalCliques.argtypes = [POINTER(Graph), c_int64]
+kbbqdll.FindAllMaximalCliques.restype = Cliques
 
 
 class KBBQGraph:
-    def __init__(self, isDiGraph: int = 1, preAllocate: int = 0, graph=None, name=""):
-        # Call the InitGraph function
+    def __init__(
+        self,
+        is_directed: int = 1,
+        pre_allocate: int = 0,
+        graph: Optional[Any] = None,
+        name: str = "",
+    ) -> None:
+        """
+        Initialize a new KBBQGraph instance or wrap an existing low-level graph pointer.
+
+        Parameters
+        ----------
+        is_directed : int, optional
+            Whether the graph is directed (1) or undirected (0).
+            Passed directly to the underlying `InitGraph` function.
+            Default is 1 (directed).
+        pre_allocate : int, optional
+            Number of nodes to pre-allocate space for. This hints the backend to
+            reserve internal memory up front to reduce reallocations during node
+            insertion. Default is 0 (no preallocation).
+        graph : Any, optional
+            An existing low-level graph handle/pointer returned from the C/C++ DLL.
+            If provided, this instance will wrap it instead of calling `InitGraph`.
+            Default is None.
+        name : str, optional
+            Optional human-readable name for the graph. Default is an empty string.
+
+        Raises
+        ------
+        MemoryError
+            If the underlying DLL fails to initialize a new graph object
+            (only applicable when `graph` is None).
+        """
         if graph is None:
-            self.graph = bbqdll.InitGraph(isDiGraph, c_uint64(preAllocate))
+            self.graph = kbbqdll.InitGraph(is_directed, c_uint64(pre_allocate))
         else:
             self.graph = graph
+
         self.name = name
+
         if not self.graph:
             raise MemoryError("Failed to initialize the graph.")
 
     def __del__(self):
         if self.graph:
-            bbqdll.FreeGraph(self.graph)
+            kbbqdll.FreeGraph(self.graph)
 
     def __len__(self):
         return self.graph.contents.numNodes
@@ -209,82 +254,218 @@ class KBBQGraph:
     def is_indexed(self):
         return self.graph.contents.indexed
 
-    def Add_Nodes(self, datasetNum: int, ids: list, check_duplicates=True):
-        numNodes = len(ids)
-        ids_array = (c_uint32 * numNodes)(*ids)
+    @property
+    def is_directed(self):
+        return self.graph.contents.isDiGraph
+
+    def add_nodes(
+        self,
+        datasetNum: int,
+        ids: Iterable[int],
+        check_duplicates: bool = True,
+    ) -> None:
+        """
+        Add a batch of nodes to a specific dataset/partite in the graph.
+
+        Parameters
+        ----------
+        datasetNum : int
+            Integer dataset/partite identifier into which nodes should be inserted.
+            This maps directly to the `dataset` dimension in the underlying graph.
+        ids : Iterable[int]
+            Iterable of integer node IDs to add. These IDs are interpreted as
+            belonging to `datasetNum`.
+        check_duplicates : bool, optional
+            If True (default), calls the safe version of the DLL method
+            (`AddNodes`), which performs duplicate checks.
+            If False, uses `AddNodesUnsafe` which does **not** check for duplicates
+            and is faster but unsafe.
+
+        Notes
+        -----
+        Internally, this converts the Python IDs into a ctypes `uint32` array
+        before passing them to the C++ backend.
+        """
+        ids_list = list(ids)
+        numNodes = len(ids_list)
+
+        ids_array = (c_uint32 * numNodes)(*ids_list)
+
         if check_duplicates:
-            bbqdll.AddNodes(
+            kbbqdll.AddNodes(
                 self.graph, c_uint32(datasetNum), ids_array, c_int64(numNodes)
             )
         else:
-            # print("Adding unsafely with duplicates as False")
-            bbqdll.AddNodesUnsafe(
+            kbbqdll.AddNodesUnsafe(
                 self.graph, c_uint32(datasetNum), ids_array, c_int64(numNodes)
             )
 
-    def Delete_Nodes(self, nodes_to_delete: list):
-        numNodes = len(nodes_to_delete)
+    def delete_nodes(self, nodes_to_delete: Iterable[NodeTuple]) -> None:
+        """
+        Delete a batch of nodes from the graph.
+
+        Parameters
+        ----------
+        nodes_to_delete : Iterable[Tuple[int, int]]
+            Iterable of (dataset, id) tuples specifying the nodes to delete.
+
+        Notes
+        -----
+        Constructs a ctypes array of `NodeId` structs before passing them to the
+        DLL `DeleteNodes` function.
+        """
+        nodes_list = list(nodes_to_delete)
+        numNodes = len(nodes_list)
+
         nodes_array = (NodeId * numNodes)(
-            *(NodeId(dataset=s[0], id=s[1]) for s in nodes_to_delete)
+            *(NodeId(dataset=ds, id=id_) for ds, id_ in nodes_list)
         )
-        bbqdll.DeleteNodes(self.graph, nodes_array, c_int64(numNodes))
 
-    def Add_Edges(
+        kbbqdll.DeleteNodes(self.graph, nodes_array, c_int64(numNodes))
+
+    def add_edges(
         self,
-        source_nodes: list,
-        target_nodes: list,
-        weights: list = [],
-        check_duplicates=True,
-    ):
+        source_nodes: Iterable[NodeTuple],
+        target_nodes: Iterable[NodeTuple],
+        weights: Optional[Iterable[float]] = None,
+        check_duplicates: bool = True,
+    ) -> None:
+        """
+        Add weighted edges to the graph.
 
-        numEdges = len(source_nodes)
-        source_array = (NodeId * numEdges)(
-            *(NodeId(dataset=s[0], id=s[1]) for s in source_nodes)
+        Parameters
+        ----------
+        source_nodes : Iterable[Tuple[int, int]]
+            Iterable of (dataset, id) tuples representing the source nodes.
+        target_nodes : Iterable[Tuple[int, int]]
+            Iterable of (dataset, id) tuples representing the target nodes.
+        weights : Iterable[float], optional
+            Iterable of edge weights. If None or empty, defaults to zero for each edge.
+        check_duplicates : bool, optional
+            If True (default), duplicate edges are checked and prevented by the
+            backend. If False, edges are inserted without duplicate checks.
+
+        Raises
+        ------
+        ValueError
+            If input lists are not the same length.
+
+        Notes
+        -----
+        Converts Python tuples into ctypes `NodeId` arrays and weights into
+        `c_double` arrays before invoking the low-level DLL call.
+        """
+        sources = list(source_nodes)
+        targets = list(target_nodes)
+
+        if len(sources) != len(targets):
+            raise ValueError("source_nodes and target_nodes must have the same length.")
+
+        num_edges = len(sources)
+
+        source_array = (NodeId * num_edges)(
+            *(NodeId(dataset=s[0], id=s[1]) for s in sources)
         )
-        target_array = (NodeId * numEdges)(
-            *(NodeId(dataset=t[0], id=t[1]) for t in target_nodes)
+        target_array = (NodeId * num_edges)(
+            *(NodeId(dataset=t[0], id=t[1]) for t in targets)
         )
-        if len(weights) == 0:
-            weights = [0] * numEdges
-        weights_array = (c_double * numEdges)(*weights)
+
+        # Normalize weights
+        if weights is None:
+            weights = [0.0] * num_edges
+        weights_list = list(weights)
+        weights_array = (c_double * num_edges)(*weights_list)
 
         # Call the AddEdges function
         if check_duplicates:
-            bbqdll.AddEdges(
+            kbbqdll.AddEdges(
                 self.graph,
                 source_array,
                 target_array,
-                c_uint64(numEdges),
+                c_uint64(num_edges),
                 weights_array,
                 0,
             )
         else:
-            bbqdll.AddEdges(
+            kbbqdll.AddEdges(
                 self.graph,
                 source_array,
                 target_array,
-                c_uint64(numEdges),
+                c_uint64(num_edges),
                 weights_array,
                 1,
             )
 
-    def Delete_Edges(self, source_nodes: list, target_nodes: list):
-        numEdges = len(source_nodes)
+    def delete_edges(
+        self,
+        source_nodes: Iterable[NodeTuple],
+        target_nodes: Iterable[NodeTuple],
+    ) -> None:
+        """
+        Delete a batch of edges from the graph.
+
+        Parameters
+        ----------
+        source_nodes : Iterable[Tuple[int, int]]
+            Iterable of (dataset, id) tuples for the source nodes of the edges
+            to be deleted.
+        target_nodes : Iterable[Tuple[int, int]]
+            Iterable of (dataset, id) tuples for the target nodes of the edges
+            to be deleted.
+
+        Raises
+        ------
+        ValueError
+            If `source_nodes` and `target_nodes` are not the same length.
+
+        Notes
+        -----
+        This function constructs ctypes arrays of `NodeId` structures and forwards
+        them to the backend DLL's `DeleteEdges` function, which removes matching
+        directed edges. For undirected graphs, the backend is expected to handle
+        symmetry.
+        """
+        sources = list(source_nodes)
+        targets = list(target_nodes)
+
+        if len(sources) != len(targets):
+            raise ValueError("source_nodes and target_nodes must have the same length.")
+
+        numEdges = len(sources)
+
         source_array = (NodeId * numEdges)(
-            *(NodeId(dataset=s[0], id=s[1]) for s in source_nodes)
+            *(NodeId(dataset=s[0], id=s[1]) for s in sources)
         )
         target_array = (NodeId * numEdges)(
-            *(NodeId(dataset=t[0], id=t[1]) for t in target_nodes)
+            *(NodeId(dataset=t[0], id=t[1]) for t in targets)
         )
-        bbqdll.DeleteEdges(self.graph, source_array, target_array, c_uint64(numEdges))
 
-    def Compress(self):
-        bbqdll.CompressToUndirectedGraph(self.graph)
+        kbbqdll.DeleteEdges(self.graph, source_array, target_array, c_uint64(numEdges))
+
+    def compress(self) -> None:
+        """
+        Convert a directed graph into an undirected one by merging reciprocal edges.
+
+        Notes
+        -----
+        This operation is performed **in place** and modifies the current graph.
+
+        The underlying DLL function `CompressToUndirectedGraph` typically:
+            * Identifies pairs of edges u→v and v→u
+            * Collapses them into a single undirected edge
+            * Averages or combines their weights (implementation depends on the DLL)
+
+        Raises
+        ------
+        RuntimeError
+            If the backend reports a failure (only if the DLL implements error codes).
+        """
+        kbbqdll.CompressToUndirectedGraph(self.graph)
 
     def _print_node(self, node):
         # Print incoming edges
         print(f"{node.dataset}-{node.id}")
-        if self.graph.contents.isDiGraph:
+        if self.is_directed:
             # Print outgoing edges
             print("Outgoing:")
             if node.outgoingLength > 0:
@@ -311,7 +492,7 @@ class KBBQGraph:
                         f"  -> {outgoing_node.dataset}-{outgoing_node.id} ({outgoing_edge.weight})"
                     )
 
-    def Print_Graph(self, print_num=None):
+    def print_graph(self, print_num=None):
         if print_num is None:
             print_num = self.graph.contents.numNodes
         num_nodes = self.graph.contents.numNodes
@@ -323,29 +504,36 @@ class KBBQGraph:
             node = nodes_array[i].contents
             self._print_node(node)
 
-    def Print_Node(self, datasetNum: int, id: int):
+    def print_node(self, datasetNum: int, id: int):
         nodes_array = self.graph.contents.nodes
 
-        node_index = bbqdll._findNode(self.graph, datasetNum, id)
+        node_index = kbbqdll._findNode(self.graph, datasetNum, id)
         if node_index < 0:
             print(f"{datasetNum}-{id} not found...")
         node = nodes_array[node_index].contents
         self._print_node(node)
 
-    def Sort(self):
-        bbqdll.Sort(self.graph)
+    def resort(self):
+        """
+        Sort the nodes based on datasetnum and nodeid, for faster binary search lookups.
+        Adding nodes unsorts
+        """
+        kbbqdll.Sort(self.graph)
 
-    def ReIndex(self):
-        bbqdll.ReIndex(self.graph)
+    def reindex(self):
+        """
+        resets the index for nodes, in case some were deleted
+        """
+        kbbqdll.ReIndex(self.graph)
 
-    def SubGraph(self, nodes: list):
+    def subgraph(self, nodes: list):
         # Given node id's, returns a subgraph copy of the graph
 
         numNodes = len(nodes)
         nodes_array = (NodeId * numNodes)(
             *(NodeId(dataset=s[0], id=s[1]) for s in nodes)
         )
-        graph = bbqdll.SubGraph(self.graph, nodes_array, c_int64(numNodes))
+        graph = kbbqdll.SubGraph(self.graph, nodes_array, c_int64(numNodes))
         return type(self)(
             0,  # not used if graph is supplied
             0,  # not used if graph is supplied
@@ -354,11 +542,14 @@ class KBBQGraph:
         )
 
     def weakly_connected_components(self) -> list:
+        """
+        works with directed and undirected
+        """
         # Define the variable to store the number of components
         numComponents = c_int64(0)
 
         # Call the WeaklyConnectedComponents function
-        components_ptr = bbqdll.WeaklyConnectedComponents(
+        components_ptr = kbbqdll.WeaklyConnectedComponents(
             self.graph, byref(numComponents)
         )
 
@@ -376,15 +567,21 @@ class KBBQGraph:
                 node = component.contents.nodes[j]
                 contents = node.contents
                 component_nodes.append([contents.dataset, contents.id])
-            bbqdll.FreeP(component.contents.nodes)
+            kbbqdll.FreeP(component.contents.nodes)
 
-            bbqdll.FreeP(component)  # frees *NodeList
+            kbbqdll.FreeP(component)  # frees *NodeList
             components_list.append(component_nodes)
-        bbqdll.FreeP(components_ptr)
+        kbbqdll.FreeP(components_ptr)
         return components_list
 
+    def connected_components(self) -> list:
+        """
+        convenience wrapper, works with directed and undirected
+        """
+        return self.weakly_connected_components()
+
     def find_cliques(self, i) -> list:
-        components = bbqdll.FindAllMaximalCliques(self.graph, c_int64(i))
+        components = kbbqdll.FindAllMaximalCliques(self.graph, c_int64(i))
         clique_list = []
         # iterate over Cliques->cliques
         for i in range(components.length):
@@ -394,10 +591,183 @@ class KBBQGraph:
                 node = clique.nodes[j]
                 contents = node.contents
                 clique_nodes.append([contents.dataset, contents.id])
-            bbqdll.FreeP(clique.nodes)  # frees **nodes
+            kbbqdll.FreeP(clique.nodes)  # frees **nodes
             clique_list.append(clique_nodes)
-        bbqdll.FreeP(components.cliques)  # frees Cliques.cliques -- *NodeList
+        kbbqdll.FreeP(components.cliques)  # frees Cliques.cliques -- *NodeList
         return clique_list
+
+    def to_networkx(
+        self, partite_names, node_names, delimiter="__", weight_name="weight"
+    ):
+        """
+        Converts the internal KBBQ graph to a networkx graph.
+
+        Parameters
+        ----------
+        partite_names : list or dict
+            Names for each partite index (dataset index).
+            Examples:
+                {0: 'ds1', 1: 'ds2'}
+                ['ds1', 'ds2']
+        node_names : dict or list
+            Mapping of partite index -> list/dict of node names.
+            Examples:
+                {0: ['alice', 'bob', 'charlie']}
+                ['ds1_names_list', 'ds2_names_list']
+            Access pattern is: node_names[dataset][node_id]
+            If a name is missing, falls back to str(node_id).
+        delimiter : str
+            Separator for combining partite and node names into a NetworkX node label.
+            Example: 'ds1__alice'
+        """
+        try:
+            import networkx as nx
+        except ImportError:
+            raise ImportError("Optional dependency 'networkx' is not installed.")
+
+        graph_struct = self.graph.contents
+
+        # Choose directed or undirected NetworkX graph
+        if self.is_directed:
+            nx_graph = nx.DiGraph()
+        else:
+            nx_graph = nx.Graph()
+
+        nodes_array = graph_struct.nodes
+        num_nodes = int(graph_struct.numNodes)
+
+        # Map C Node* address -> NetworkX node label
+        ptr_to_label = {}
+
+        # --- first pass: add nodes -----------------------------------------------
+        for i in range(num_nodes):
+            node_ptr = nodes_array[i]
+            if not bool(node_ptr):
+                continue  # skip null pointers, if any
+
+            node = node_ptr.contents
+            dataset_idx = int(node.dataset)
+            node_id = int(node.id)
+
+            if isinstance(partite_names, dict):
+                try:
+                    partite_label = partite_names[dataset_idx]
+                except KeyError:
+                    raise IndexError(f"Missing partite name for dataset {dataset_idx}")
+            else:  # assume list-like
+                try:
+                    partite_label = partite_names[dataset_idx]
+                except IndexError:
+                    raise IndexError(
+                        f"partite_names must have at least {dataset_idx + 1} entries"
+                    )
+
+            node_label = None
+            if isinstance(node_names, dict):
+                per_partite = node_names.get(dataset_idx)
+                if per_partite is not None:
+                    if isinstance(per_partite, dict):
+                        node_label = per_partite.get(node_id)
+                    else:  # assume list-like
+                        if 0 <= node_id < len(per_partite):
+                            node_label = per_partite[node_id]
+            else:
+                # assume list-like of per-partite containers
+                if 0 <= dataset_idx < len(node_names):
+                    per_partite = node_names[dataset_idx]
+                    if isinstance(per_partite, dict):
+                        node_label = per_partite.get(node_id)
+                    else:
+                        if 0 <= node_id < len(per_partite):
+                            node_label = per_partite[node_id]
+
+            if node_label is None:
+                node_label = str(node_id)
+
+            full_label = f"{partite_label}{delimiter}{node_label}"
+
+            nx_graph.add_node(
+                full_label,
+                dataset=dataset_idx,
+                id=node_id,
+                index=int(node.index),
+            )
+
+            # use the C address as a stable key
+            ptr_to_label[int(addressof(node))] = full_label
+
+        # --- second pass: add edges ----------------------------------------------
+        if self.is_directed:
+            # Use outgoing edges only; incoming is redundant for building the graph.
+            for i in range(num_nodes):
+                node_ptr = nodes_array[i]
+                if not bool(node_ptr):
+                    continue
+
+                node = node_ptr.contents
+                u_label = ptr_to_label.get(int(addressof(node)))
+                if u_label is None:
+                    continue
+
+                out_len = int(node.outgoingLength)
+                if out_len <= 0 or not bool(node.outgoing):
+                    continue
+
+                edges_array = node.outgoing
+
+                for j in range(out_len):
+                    edge = edges_array[j]
+                    if not bool(edge.target):
+                        continue
+
+                    target_node = edge.target.contents
+                    v_label = ptr_to_label.get(int(addressof(target_node)))
+                    if v_label is None:
+                        continue
+
+                    weight = float(edge.weight)
+                    nx_graph.add_edge(u_label, v_label, **{weight_name: weight})
+
+        else:
+            # Undirected: deduplicate edges (adjacency likely stored on both ends)
+            seen = set()
+
+            for i in range(num_nodes):
+                node_ptr = nodes_array[i]
+                if not bool(node_ptr):
+                    continue
+
+                node = node_ptr.contents
+                u_label = ptr_to_label.get(int(addressof(node)))
+                if u_label is None:
+                    continue
+
+                undirected_len = int(node.undirectedLength)
+                if undirected_len <= 0 or not bool(node.undirected):
+                    continue
+
+                edges_array = node.undirected
+
+                for j in range(undirected_len):
+                    edge = edges_array[j]
+                    if not bool(edge.target):
+                        continue
+
+                    target_node = edge.target.contents
+                    v_label = ptr_to_label.get(int(addressof(target_node)))
+                    if v_label is None:
+                        continue
+
+                    # sort labels to get an undirected key
+                    key = tuple(sorted((u_label, v_label)))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    weight = float(edge.weight)
+                    nx_graph.add_edge(u_label, v_label, **{weight_name: weight})
+
+        return nx_graph
 
 
 def test_graph():
@@ -444,25 +814,25 @@ def test_graph():
             return [ds_dict[node.split("__")[0]], idx_dict[node.split("__")[1]]]
         return [ds_dict[node[0].split("__")[0]], idx_dict[node[0].split("__")[1]]]
 
-    bbq_nodes = []
+    kbbq_nodes = []
     for node in nodes:
         # print(node)
 
-        bbq_nodes.append(rename_node(node))
+        kbbq_nodes.append(rename_node(node))
 
-    bbq_edges = [[], [], []]
+    kbbq_edges = [[], [], []]
     for edge in edges:
         source = edge[0]
         target = edge[1]
         weight = edge[2]["score"]
-        bbq_edges[0].append(rename_node(source))
-        bbq_edges[1].append(rename_node(target))
-        bbq_edges[2].append(weight)
+        kbbq_edges[0].append(rename_node(source))
+        kbbq_edges[1].append(rename_node(target))
+        kbbq_edges[2].append(weight)
 
-    # for i in range(len(bbq_edges[0])):
-    #     print(bbq_edges[0][i], bbq_edges[1][i], bbq_edges[2][i])
+    # for i in range(len(kbbq_edges[0])):
+    #     print(kbbq_edges[0][i], kbbq_edges[1][i], kbbq_edges[2][i])
 
-    for node in bbq_nodes:
+    for node in kbbq_nodes:
         a.Add_Nodes(node[0], [node[1]], check_duplicates=True)
 
     a.Sort()
@@ -470,7 +840,7 @@ def test_graph():
     # print(sources)
     # print(targets)
     # print(weights)
-    a.Add_Edges(bbq_edges[0], bbq_edges[1], bbq_edges[2], check_duplicates=True)
+    a.Add_Edges(kbbq_edges[0], kbbq_edges[1], kbbq_edges[2], check_duplicates=True)
 
     # print("*****")
     # a.Sort()
@@ -589,43 +959,138 @@ def graph_that_crashed():
 
 
 if __name__ == "__main__":
-    import pandas as pd
-    from bmxp.eclipse import MSAligner
-    from __init__ import KBBQGraph
+    # Example using your KBBQGraph class
 
-    datasets = ["Col1.csv", "Col2.csv", "Col3.csv", "Col4.csv", "Col5.csv"]
-    partites = {}
-    num_nodes = 0
+    # Create a directed graph with preallocation space
+    import matplotlib.pyplot as plt
+    import networkx as nx
 
-    for i, dataset in enumerate(datasets):
-        ds = pd.read_csv(dataset)
-        partites[i] = ds.index.tolist()
-        num_nodes += len(ds)
-    print(num_nodes)
+    g = KBBQGraph(is_directed=1, pre_allocate=20, name="big_example")
 
-    num_edges = 0
-    edges = {i: {} for i in range(len(datasets))}
-    for i, ds1 in enumerate(datasets):
-        for j, ds2 in enumerate(datasets):
-            if i == j:
-                continue
-            edge_csv = pd.read_csv(ds1 + ds2)
-            edges[i][j] = (edge_csv.index.tolist(), edge_csv.iloc[:, 0].tolist())
-            num_edges += len(edge_csv)
-    print(num_edges)
-    counted_edges = 0
-    kgraph = KBBQGraph(preAllocate=num_nodes)
-    for i in partites:
-        kgraph.Add_Nodes(i, partites[i], False)
-    kgraph.Sort()
-    kgraph.ReIndex()
-    for i in edges:
-        for j in edges[i]:
-            sources = [[i] * len(edges[i][j][0]), edges[i][j][0]]
-            targets = [[j] * len(edges[i][j][0]), edges[i][j][1]]
-            kgraph.Add_Edges(
-                list(zip(*sources)), list(zip(*targets)), check_duplicates=False
-            )
-            counted_edges += len(sources[0])
-            print(sources[0][0], sources[1][0], targets[0][0], targets[1][0])
-            print(kgraph.num_edges, counted_edges)
+    print("Initial:")
+    print("  num_nodes =", g.num_nodes)
+    print("  num_edges =", g.num_edges)
+    print()
+
+    # ---------------------------------------------------------------------
+    # Add nodes to 4 different datasets (partites)
+    # ---------------------------------------------------------------------
+
+    # Dataset 0: 5 nodes
+    g.add_nodes(datasetNum=0, ids=[0, 1, 2, 3, 4])
+
+    # Dataset 1: 3 nodes
+    g.add_nodes(datasetNum=1, ids=[0, 1, 2])
+
+    # Dataset 2: 4 nodes
+    g.add_nodes(datasetNum=2, ids=[0, 1, 2, 3])
+
+    # Dataset 3: 2 nodes
+    g.add_nodes(datasetNum=3, ids=[0, 1])
+
+    print("After adding nodes:")
+    print("  num_nodes =", g.num_nodes)  # should be 14
+    print("  num_edges =", g.num_edges)
+    print()
+
+    # ---------------------------------------------------------------------
+    # Add edges across partites
+    # ---------------------------------------------------------------------
+
+    # Connect dataset 0 → dataset 1
+    sources_01 = [(0, 0), (0, 1), (0, 4)]
+    targets_01 = [(1, 0), (1, 2), (1, 1)]
+    weights_01 = [0.8, 0.55, 0.2]
+    g.add_edges(sources_01, targets_01, weights_01)
+
+    # Connect dataset 1 → dataset 2
+    sources_12 = [(1, 0), (1, 2)]
+    targets_12 = [(2, 3), (2, 1)]
+    weights_12 = [1.0, 0.33]
+    g.add_edges(sources_12, targets_12, weights_12)
+
+    # Connect dataset 2 → dataset 3
+    sources_23 = [(2, 0), (2, 3), (2, 1)]
+    targets_23 = [(3, 1), (3, 0), (3, 1)]
+    weights_23 = [0.99, 0.42, 0.11]
+    g.add_edges(sources_23, targets_23, weights_23)
+
+    # Add some criss-cross edges for complexity
+    sources_mix = [(0, 2), (1, 1), (3, 0)]
+    targets_mix = [(2, 1), (3, 1), (0, 3)]
+    weights_mix = [0.77, 0.4, 0.25]
+    g.add_edges(sources_mix, targets_mix, weights_mix)
+
+    print("After adding edges:")
+    print("  num_nodes =", g.num_nodes)
+    print("  num_edges =", g.num_edges)
+    print()
+
+    # ---------------------------------------------------------------------
+    # OPTIONAL: sort & reindex graph if your C library supports it
+    # ---------------------------------------------------------------------
+    # kbbqdll.Sort(g.graph)
+    # kbbqdll.ReIndex(g.graph)
+
+    print("Graph building complete.")
+
+    # Names of the partites (datasets)
+    partite_names = ["ds1", "ds2", "ds3", "ds4"]
+
+    # Node names per dataset.
+    # For this example we just name them n0, n1, n2, etc.
+    node_names = {
+        0: [f"n{i}" for i in range(5)],  # dataset 0 had 5 nodes
+        1: [f"n{i}" for i in range(3)],  # dataset 1 had 3 nodes
+        2: [f"n{i}" for i in range(4)],  # dataset 2 had 4 nodes
+        3: [f"n{i}" for i in range(2)],  # dataset 3 had 2 nodes
+    }
+
+    # Convert to NetworkX
+    nx_graph = g.to_networkx(
+        partite_names=partite_names, node_names=node_names, delimiter="__"
+    )
+
+    print("Converted to NetworkX.")
+    print(f"  NX nodes: {nx_graph.number_of_nodes()}")
+    print(f"  NX edges: {nx_graph.number_of_edges()}")
+
+    # Example: show a few edges
+    print("\nSample edges:")
+    for u, v, data in list(nx_graph.edges(data=True))[:10]:
+        print(f"  {u}  →  {v}   weight={data.get('weight')}")
+    # Layout — spring is usually the nicest
+    pos = nx.spring_layout(nx_graph, seed=42)
+
+    plt.figure(figsize=(10, 8))
+
+    # Draw nodes
+    nx.draw_networkx_nodes(
+        nx_graph, pos, node_size=600, node_color="#4C72B0", alpha=0.9
+    )
+
+    # Draw edges
+    nx.draw_networkx_edges(
+        nx_graph,
+        pos,
+        arrowstyle="-|>" if nx_graph.is_directed() else "-",
+        arrowsize=20,
+        width=1.6,
+        edge_color="#555555",
+    )
+
+    # Draw labels
+    nx.draw_networkx_labels(nx_graph, pos, font_size=9, font_color="black")
+
+    # Draw edge weights as small text
+    edge_labels = {
+        (u, v): f"{d['weight']:.2f}" for u, v, d in nx_graph.edges(data=True)
+    }
+    nx.draw_networkx_edge_labels(
+        nx_graph, pos, edge_labels=edge_labels, font_color="red", font_size=7
+    )
+
+    plt.title("KBBQGraph → NetworkX Visualization")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()

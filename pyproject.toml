@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kbbqgraph"
+version = "0.1.0"
+description = "Fast low-level graph utilities for metabolomics pipelines (BBQGraph)"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Daniel Hitchcock", email = "daniel.s.hitchcock@gmail.com" },
+]
+requires-python = ">=3.8"
+
+# OPTIONAL: add topics
+dependencies = [
+    "numpy",
+]
+keywords = ["graph", "metabolomics", "ctypes", "bbqgraph"]
+
+# Classifiers help PyPI categorize the project
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: MIT License",
+]
+
+[project.urls]
+Repository = "https://github.com/broadinstitute/kbbqgraph"
+
+# -------------------------------
+# Setuptools instructions
+# -------------------------------
+[tool.setuptools]
+# Include all files inside the kbbqgraph/ package directory
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kbbqgraph"]
+
+# Explicitly include your shared libraries in wheels and source dists
+[tool.setuptools.package-data]
+kbbqgraph = ["kbbqdll.so", "kbbqdll.dll", "kbbqdll.dylib", "KBBQGraph.c"]
