@@ -72,40 +72,39 @@ int64_t _NodeIdxWeighted(WeightedEdge *list, int64_t length, Node *node)
   return -1;
 }
 
-// Comparator function for qsort, comparing the 64-bit HashValue
-int _compareHashValue(const void *a, const void *b)
+// converts a node to a uint64_t node key
+static inline uint64_t NodeToKey(const Node *n)
 {
+  return ((uint64_t)(uint32_t)n->dataset << 32) | (uint32_t)n->id;
+}
 
-  Node *nodeA = (*(Node **)a);
-  Node *nodeB = (*(Node **)b);
+// converts a NodeID struct to a uint64_t node key
+static inline uint64_t NodeIdToKey(const NodeId n)
+{
+  return ((uint64_t)n.dataset << 32) | n.id;
+}
 
-  // // method 1 directly with pointer data
-  // uint64_t hashA = *(uint64_t *)nodeA;
-  // uint64_t hashB = *(uint64_t *)nodeB;
+// converts a NodeID struct to a uint64_t node key
+static inline uint64_t NodeCoordsToKey(uint32_t dataset, uint32_t id)
+{
+  return ((uint64_t)dataset << 32) | id;
+}
 
-  // method 2 memcpy
-  uint64_t hashA;
-  uint64_t hashB;
-  memcpy(&hashA, nodeA, 8);
-  memcpy(&hashB, nodeB, 8);
+int _compareNodeId(const void *a, const void *b)
+{
+  const Node *nodeA = *(Node *const *)a;
+  const Node *nodeB = *(Node *const *)b;
 
-  // // method 3
-  // uint64_t hashA = ((uint64_t)nodeA->dataset << 32) | nodeA->id;
-  // uint64_t hashB = ((uint64_t)nodeB->dataset << 32) | nodeB->id;
+  uint64_t hashA = NodeToKey(nodeA);
+  uint64_t hashB = NodeToKey(nodeB);
 
   if (hashA < hashB)
-  {
     return -1;
-  }
-  else if (hashA > hashB)
-  {
+  if (hashA > hashB)
     return 1;
-  }
-  else
-  {
-    return 0;
-  }
+  return 0;
 }
+
 // Function to re-index (sort) the nodes in the graph
 // adding nodes will set sorted=0
 void Sort(Graph *graph)
@@ -116,7 +115,7 @@ void Sort(Graph *graph)
   }
 
   // Use qsort to sort the nodes based on their HashValue
-  qsort(graph->nodes, graph->numNodes, sizeof(Node *), _compareHashValue);
+  qsort(graph->nodes, graph->numNodes, sizeof(Node *), _compareNodeId);
 
   // Mark the graph as indexed
   graph->sorted = 1;
@@ -202,25 +201,21 @@ void _removeUnEdge(Graph *graph, Node *source, Node *target)
 }
 
 // Binary search for a node in a sorted array of nodes
-int _binarySearch(Node **nodes, int64_t length, uint64_t combinedHash)
+int _binarySearch(Node **nodes, int64_t length, uint64_t nodeKey)
 {
   int left = 0;
   int right = length - 1;
-
   while (left <= right)
   {
     int mid = left + (right - left) / 2;
-
-    uint64_t midHash;
-    memcpy(&midHash, nodes[mid], 8);
-    if (midHash == combinedHash)
+    uint64_t midHash = NodeToKey(nodes[mid]);
+    if (midHash == nodeKey)
       return mid; // Node found
-    else if (midHash < combinedHash)
+    else if (midHash < nodeKey)
       left = mid + 1;
     else
       right = mid - 1;
   }
-
   return -1; // Node not found
 }
 
@@ -270,7 +265,7 @@ void _deleteNode(Graph *graph, int64_t nodeIndex)
 int64_t _findNode(Graph *graph, uint32_t dataset, uint32_t id)
 {
   // uint32_t nameHash = djb2(name);
-  uint64_t combinedHash = ((uint64_t)id << 32) | dataset;
+  uint64_t combinedHash = NodeCoordsToKey(dataset, id);
 
   if (graph->sorted)
     return _binarySearch(graph->nodes, graph->numNodes, combinedHash);
@@ -382,7 +377,7 @@ void AddNodes(Graph *graph, uint32_t datasetNum, uint32_t *ids, int64_t numNodes
     newNode->incomingLength = 0;
     newNode->undirectedLength = 0;
   }
-  qsort(newNodes, numNodes, sizeof(Node *), _compareHashValue);
+  qsort(newNodes, numNodes, sizeof(Node *), _compareNodeId);
 
   if (!graph->sorted)
     Sort(graph);
@@ -393,7 +388,7 @@ void AddNodes(Graph *graph, uint32_t datasetNum, uint32_t *ids, int64_t numNodes
   int64_t actualNewNodes = 0;
   for (int64_t i = 0; i < numNodes; i++)
   {
-    uint64_t combinedHash = ((uint64_t)newNodes[i]->id << 32) | newNodes[i]->dataset;
+    uint64_t combinedHash = NodeToKey(newNodes[i]);
     if (_binarySearch(&newNodes[i + 1], numNodes - i - 1, combinedHash) < 0)
       if (_binarySearch(graph->nodes, graph->numNodes, combinedHash) < 0)
       {

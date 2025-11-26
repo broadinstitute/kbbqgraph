@@ -22,7 +22,7 @@ NodeTuple = Tuple[int, int]  # (dataset, id)
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 kbbqdll = None
-
+__version__ = "0.1.1"
 
 if platform.system() == "Windows" and os.path.exists(
     os.path.join(dir_path, "kbbqdll.dll")
@@ -611,6 +611,7 @@ class KBBQGraph:
                 ['ds1', 'ds2']
         node_names : dict or list
             Mapping of partite index -> list/dict of node names.
+            DO NOT USE DATASET NAMES, ONLY DATASET INDICES
             Examples:
                 {0: ['alice', 'bob', 'charlie']}
                 ['ds1_names_list', 'ds2_names_list']
@@ -899,6 +900,45 @@ def test_graph():
     # # for i, subgraph in enumerate(subgraphs):
     # #     print("Subgraph ", i)
     # #     subgraph.Print_Graph()
+
+
+def draw_graph(nx_graph):
+    """
+    Draws an NX Graph
+    """
+    pos = nx.spring_layout(nx_graph, seed=42)
+    plt.figure(figsize=(10, 8))
+
+    # Draw nodes
+    nx.draw_networkx_nodes(
+        nx_graph, pos, node_size=600, node_color="#4C72B0", alpha=0.9
+    )
+
+    # Draw edges
+    nx.draw_networkx_edges(
+        nx_graph,
+        pos,
+        arrowstyle="-|>" if nx_graph.is_directed() else "-",
+        arrowsize=20,
+        width=1.6,
+        edge_color="#555555",
+    )
+
+    # Draw labels
+    nx.draw_networkx_labels(nx_graph, pos, font_size=9, font_color="black")
+
+    # Draw edge weights as small text
+    edge_labels = {
+        (u, v): f"{d['weight']:.2f}" for u, v, d in nx_graph.edges(data=True)
+    }
+    nx.draw_networkx_edge_labels(
+        nx_graph, pos, edge_labels=edge_labels, font_color="red", font_size=7
+    )
+
+    plt.title("KBBQGraph → NetworkX Visualization")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
 
 
 def graph_that_crashed():

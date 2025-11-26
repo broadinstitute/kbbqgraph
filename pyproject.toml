@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kbbqgraph"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fast low-level graph utilities for metabolomics pipelines (BBQGraph)"
 readme = "README.md"
 license = { file = "LICENSE" }
